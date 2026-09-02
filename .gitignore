@@ -1,0 +1,16 @@
+.env
+.venv/
+__pycache__/
+*.py[cod]
+.streamlit/secrets.toml
+data/*
+!data/samples/
+!data/samples/**
+*.sqlite3
+*.bin
+*.pickle
+*.index
+.ipynb_checkpoints/
+notebooks/
+test_projects/
+requirments.txt

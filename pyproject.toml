@@ -1,0 +1,30 @@
+[project]
+name = "rag"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "chromadb>=1.5.9",
+    "faiss-cpu>=1.15.0",
+    "ipykernel>=7.3.0",
+    "langchain>=1.3.14",
+    "langchain-community>=0.4.2",
+    "langchain-core>=1.4.9",
+    "langchain-google-genai>=4.2.7",
+    "langchain-groq>=1.1.3",
+    "langchain-openai>=1.3.5",
+    "langchain-tavily>=0.2.18",
+    "langchain-text-splitters>=1.1.2",
+    "langgraph>=1.2.9",
+    "msoffcrypto-tool>=6.0.0",
+    "networkx>=3.6.1",
+    "openpyxl>=3.1.5",
+    "pandas>=3.0.5",
+    "pymupdf>=1.28.2",
+    "pypdf>=6.16.1",
+    "python-dotenv>=1.2.2",
+    "sentence-transformers>=6.0.0",
+    "streamlit>=1.51.0",
+    "unstructured>=0.25.2",
+]

@@ -1,0 +1,3 @@
+Retrieval augmented generation combines search with generation. A user question is embedded, matched against document chunks in a vector index, and answered using the retrieved evidence. Citations help users verify where the answer came from.
+
+LangGraph is useful for agentic workflows because each step can be represented as a node. A research agent can plan the question, retrieve evidence, draft an answer, verify support, and retry retrieval if the evidence is weak.
