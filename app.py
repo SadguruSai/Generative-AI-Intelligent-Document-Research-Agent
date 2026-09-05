@@ -2,6 +2,9 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 
 import streamlit as st
+from dotenv import load_dotenv
+
+load_dotenv()
 
 from src.data_loader import load_all_documents
 from src.embedding import EmbeddingPipeline
@@ -40,6 +43,19 @@ for message in st.session_state.messages:
         st.markdown(message["content"])
         if message.get("trace"):
             st.caption(str(message["trace"]))
+        if message.get("metrics"):
+            with st.expander("Evaluation Metrics"):
+                cols = st.columns(4)
+                m = message["metrics"]
+                cols[0].metric("Retrieval Precision", f"{m['retrieval_precision']:.0%}")
+                cols[1].metric("Faithfulness", f"{m['faithfulness']:.0%}")
+                cols[2].metric("Answer Relevance", f"{m['answer_relevance']:.0%}")
+                cols[3].metric("Latency", f"{m['latency_seconds']}s")
+                st.caption(
+                    f"Chunks retrieved: {m['total_chunks_retrieved']} | "
+                    f"Relevant chunks used: {m['relevant_chunks_used']} | "
+                    f"Retrieval attempts: {m['retrieval_attempts']}"
+                )
 
 question = st.chat_input("Ask a research question")
 if question and st.session_state.agent:
@@ -49,9 +65,27 @@ if question and st.session_state.agent:
     with st.spinner("Planning, retrieving, answering, and verifying evidence..."):
         result = st.session_state.agent.ask(question)
     trace = {"plan": result["plan"], "supported": result["supported"], "retrieval_attempts": result["attempts"]}
-    st.session_state.messages.append({"role": "assistant", "content": result["answer"], "trace": trace})
+    st.session_state.messages.append({
+        "role": "assistant",
+        "content": result["answer"],
+        "trace": trace,
+        "metrics": result.get("metrics"),
+    })
     with st.chat_message("assistant"):
         st.markdown(result["answer"])
         st.caption(str(trace))
+        if result.get("metrics"):
+            with st.expander("Evaluation Metrics"):
+                cols = st.columns(4)
+                m = result["metrics"]
+                cols[0].metric("Retrieval Precision", f"{m['retrieval_precision']:.0%}")
+                cols[1].metric("Faithfulness", f"{m['faithfulness']:.0%}")
+                cols[2].metric("Answer Relevance", f"{m['answer_relevance']:.0%}")
+                cols[3].metric("Latency", f"{m['latency_seconds']}s")
+                st.caption(
+                    f"Chunks retrieved: {m['total_chunks_retrieved']} | "
+                    f"Relevant chunks used: {m['relevant_chunks_used']} | "
+                    f"Retrieval attempts: {m['retrieval_attempts']}"
+                )
 elif question:
     st.info("Build the research index before asking questions.")

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import re
+import time
 from pathlib import Path
 from typing import TypedDict
 
@@ -16,19 +17,33 @@ class ResearchState(TypedDict):
     question: str
     plan: list[str]
     evidence: list[Document]
+    raw_answer: str
     answer: str
     supported: bool
     attempts: int
+    metrics: dict
+    start_time: float
 
 
 class ResearchAgent:
     def __init__(self, chunks: list[Document], embeddings):
         self.embeddings = EmbeddingPipeline()
         self.store = FaissDocumentStore(chunks, embeddings)
+        self.llm = self._init_llm()
         self.graph = self._build_graph()
 
     def ask(self, question: str) -> ResearchState:
-        return self.graph.invoke({"question": question, "plan": [], "evidence": [], "answer": "", "supported": False, "attempts": 0})
+        return self.graph.invoke({
+            "question": question, "plan": [], "evidence": [],
+            "raw_answer": "", "answer": "", "supported": False,
+            "attempts": 0, "metrics": {}, "start_time": time.time(),
+        })
+
+    def _init_llm(self):
+        if os.getenv("GROQ_API_KEY"):
+            from langchain_groq import ChatGroq
+            return ChatGroq(model="llama-3.1-8b-instant", temperature=0)
+        return None
 
     def _build_graph(self):
         graph = StateGraph(ResearchState)
@@ -36,11 +51,13 @@ class ResearchAgent:
         graph.add_node("retrieve", self._retrieve)
         graph.add_node("answer", self._answer)
         graph.add_node("verify", self._verify)
+        graph.add_node("evaluate", self._evaluate)
         graph.set_entry_point("plan")
         graph.add_edge("plan", "retrieve")
         graph.add_edge("retrieve", "answer")
         graph.add_edge("answer", "verify")
-        graph.add_conditional_edges("verify", self._next_step, {"retry": "retrieve", "done": END})
+        graph.add_conditional_edges("verify", self._next_step, {"retry": "retrieve", "evaluate": "evaluate"})
+        graph.add_edge("evaluate", END)
         return graph.compile()
 
     def _plan(self, state: ResearchState) -> ResearchState:
@@ -66,26 +83,79 @@ class ResearchAgent:
     def _answer(self, state: ResearchState) -> ResearchState:
         relevant = [doc for doc in state["evidence"] if self._is_relevant(state["question"], doc)]
         if not relevant:
-            state["answer"] = "I could not find enough evidence in the uploaded documents."
+            state["raw_answer"] = "I could not find enough evidence in the uploaded documents."
+            state["answer"] = state["raw_answer"]
             return state
-        direct = self._direct_answer(state["question"], relevant)
-        lines = [f"**Direct answer:** {direct}", "", "**Evidence:**"]
+
+        context_parts = []
+        for i, doc in enumerate(relevant[:5]):
+            source = Path(str(doc.metadata.get("source", ""))).name
+            page = doc.metadata.get("page")
+            cite = f"{source}, page {page + 1}" if isinstance(page, int) else source
+            context_parts.append(f"[Chunk {i+1}, {cite}]: {doc.page_content}")
+        context = "\n\n".join(context_parts)
+
+        if self.llm:
+            prompt = (
+                f"You are a document research assistant. Answer the user's question using ONLY the evidence provided below. "
+                f"If the evidence does not contain enough information, say so. Cite sources by chunk number.\n\n"
+                f"EVIDENCE:\n{context}\n\n"
+                f"QUESTION: {state['question']}\n\n"
+                f"Answer concisely in 2-4 sentences. Cite evidence using [Chunk N] notation."
+            )
+            try:
+                response = self.llm.invoke(prompt)
+                state["raw_answer"] = response.content
+            except Exception:
+                state["raw_answer"] = self._best_sentence(state["question"], relevant[0].page_content)
+        else:
+            state["raw_answer"] = self._best_sentence(state["question"], relevant[0].page_content)
+
+        evidence_lines = []
         for doc in relevant[:3]:
-            lines.append(f"- {self._best_sentence(state['question'], doc.page_content)} [{self._citation(doc)}]")
-        state["answer"] = "\n".join(lines)
+            evidence_lines.append(f"- {self._best_sentence(state['question'], doc.page_content)} [{self._citation(doc)}]")
+        state["answer"] = state["raw_answer"] + "\n\n**Evidence:**\n" + "\n".join(evidence_lines)
         return state
 
     def _verify(self, state: ResearchState) -> ResearchState:
         state["supported"] = bool(
             state["evidence"]
-            and state["answer"]
-            and "could not find" not in state["answer"].lower()
+            and state["raw_answer"]
+            and "could not find" not in state["raw_answer"].lower()
             and any(self._is_relevant(state["question"], doc) for doc in state["evidence"])
         )
         return state
 
     def _next_step(self, state: ResearchState) -> str:
-        return "done" if state["supported"] or state["attempts"] >= 2 else "retry"
+        return "done" if state["supported"] or state["attempts"] >= 2 else "evaluate"
+
+    def _evaluate(self, state: ResearchState) -> ResearchState:
+        q_words = set(self._tokens(state["question"]))
+        evidence_text = " ".join(doc.page_content for doc in state["evidence"]).lower()
+        answer_text = state["raw_answer"].lower()
+
+        relevant_chunks = sum(1 for doc in state["evidence"] if self._is_relevant(state["question"], doc))
+        retrieval_precision = round(relevant_chunks / max(len(state["evidence"]), 1), 2)
+
+        evidence_terms = set(re.findall(r"[a-z]{3,}", evidence_text))
+        answer_terms = set(re.findall(r"[a-z]{3,}", answer_text))
+        faithfulness = round(len(evidence_terms & answer_terms) / max(len(answer_terms), 1), 2)
+
+        answer_relevant_words = sum(1 for w in q_words if w in answer_text)
+        answer_relevance = round(answer_relevant_words / max(len(q_words), 1), 2)
+
+        latency = round(time.time() - state["start_time"], 2)
+
+        state["metrics"] = {
+            "retrieval_precision": retrieval_precision,
+            "faithfulness": faithfulness,
+            "answer_relevance": answer_relevance,
+            "latency_seconds": latency,
+            "retrieval_attempts": state["attempts"],
+            "total_chunks_retrieved": len(state["evidence"]),
+            "relevant_chunks_used": relevant_chunks,
+        }
+        return state
 
     def _web_search(self, question: str) -> list[Document]:
         if not os.getenv("TAVILY_API_KEY"):
@@ -124,12 +194,6 @@ class ResearchAgent:
         if "police custody" in question.lower():
             return "police custody" in text
         return len([word for word in words if word in text]) >= min(2, len(words))
-
-    def _direct_answer(self, question: str, docs: list[Document]) -> str:
-        text = " ".join(doc.page_content for doc in docs).lower()
-        if "police custody" in question.lower() and re.search(r"fifteen|15", text):
-            return "A Magistrate can authorize police custody for a maximum total period of 15 days in the whole."
-        return self._best_sentence(question, docs[0].page_content)
 
     def _best_sentence(self, question: str, text: str) -> str:
         words = set(self._tokens(question))
