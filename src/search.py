@@ -127,7 +127,9 @@ class ResearchAgent:
         return state
 
     def _next_step(self, state: ResearchState) -> str:
-        return "done" if state["supported"] or state["attempts"] >= 2 else "evaluate"
+        if state["supported"] or state["attempts"] >= 2:
+            return "evaluate"
+        return "retry"
 
     def _evaluate(self, state: ResearchState) -> ResearchState:
         q_words = set(self._tokens(state["question"]))
