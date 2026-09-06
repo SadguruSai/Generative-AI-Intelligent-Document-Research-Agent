@@ -31,13 +31,18 @@ class ResearchAgent:
         self.store = FaissDocumentStore(chunks, embeddings)
         self.llm = self._init_llm()
         self.graph = self._build_graph()
+        self.history: list[str] = []
 
     def ask(self, question: str) -> ResearchState:
         return self.graph.invoke({
             "question": question, "plan": [], "evidence": [],
             "raw_answer": "", "answer": "", "supported": False,
             "attempts": 0, "metrics": {}, "start_time": time.time(),
+            "history": list(self.history),
         })
+
+    def clear_history(self):
+        self.history.clear()
 
     def _init_llm(self):
         if os.getenv("GROQ_API_KEY"):
@@ -96,7 +101,11 @@ class ResearchAgent:
         context = "\n\n".join(context_parts)
 
         if self.llm:
+            history_text = ""
+            if state.get("history"):
+                history_text = "CONVERSATION HISTORY (for context, do not repeat):\n" + "\n".join(state["history"][-6:]) + "\n\n"
             prompt = (
+                f"{history_text}"
                 f"You are a document research assistant. Answer the user's question using ONLY the evidence provided below. "
                 f"If the evidence does not contain enough information, say so. Cite sources by chunk number.\n\n"
                 f"EVIDENCE:\n{context}\n\n"
@@ -115,6 +124,7 @@ class ResearchAgent:
         for doc in relevant[:3]:
             evidence_lines.append(f"- {self._best_sentence(state['question'], doc.page_content)} [{self._citation(doc)}]")
         state["answer"] = state["raw_answer"] + "\n\n**Evidence:**\n" + "\n".join(evidence_lines)
+        self.history.append(f"Q: {state['question']}\nA: {state['raw_answer']}")
         return state
 
     def _verify(self, state: ResearchState) -> ResearchState:
