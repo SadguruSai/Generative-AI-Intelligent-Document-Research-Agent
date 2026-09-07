@@ -33,7 +33,7 @@ uv run streamlit run app.py
 ```text
 Upload documents
   -> LangChain loaders
-  -> Recursive text chunking (400 chars, 80 overlap)
+  -> Recursive text chunking (220 tokens, token-based splitting)
   -> Sentence-Transformers embeddings (all-MiniLM-L6-v2)
   -> FAISS vector index (IndexFlatIP)
   -> LangGraph research workflow
